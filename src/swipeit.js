@@ -13,28 +13,70 @@
             var timeDelay = Math.max(0, 16 - (currTime - lastTime));
             lastTime = currTime + timeDelay;
             return global.setTimeout(function () {
-                callback(Date.now());
+                callback();
             }, timeDelay);
         };
 
     // Works around a rare bug in Safari 6 where the first request is never invoked.
     requestAnimationFrame(function () {});
 
-    var Swipe = function (element) {
+    /**
+     * @constructor
+     * @param {Element|string} element
+     * @param {Object=} opt_config
+     * @param {number=} opt_config.maxAngle
+     * @param {number=} opt_config.directionDistance
+     */
+    var Swipe = function (element, opt_config) {
+        /**
+         * @type {Object}
+         */
+        this.opt = opt_config || {};
+
         /**
          * @type {Element}
          */
-        this.e = element;
+        this.e = typeof element === 'string'
+            ? document.getElementById(element) : element;
 
         /**
          * @type {Object}
          */
-        this._startPos;
+        this._startPos = null;
 
         /**
          * @type {boolean}
          */
         this._animating = false;
+
+        /**
+         * up|down|right|left
+         * @type {string}
+         */
+        this._direction = null;
+
+        /**
+         * @type {number}
+         */
+        this._directionDistance = this.opt['directionDistance'] || 5;
+
+        var maxAngle = this.opt['maxAngle'] || 45;
+        /**
+         * @type {Object}
+         */
+        this._angles = {
+            'right': [ [0, maxAngle], [360 - maxAngle, 360] ],
+            'top': [ [90 - maxAngle, 90 + maxAngle] ],
+            'left': [ [180 - maxAngle, 180 + maxAngle] ],
+            'bottom': [ [270 - maxAngle, 270 + maxAngle] ]
+        };
+
+        this._startCallback = this._onstart.bind(this);
+        this._moveCallback = this._onmove.bind(this);
+        this._endCallback = this._onend.bind(this);
+
+        this.e.addEventListener('mousedown', this._startCallback, false);
+        this.e.addEventListener('touchstart', this._startCallback, false);
     };
 
     /**
@@ -78,13 +120,13 @@
 
         if (evt.targetTouches) {
             // Prefer Touch Events
-            point.x = evt.targetTouches[0].clientX;
-            point.y = evt.targetTouches[0].clientY;
+            point['x'] = evt.targetTouches[0].clientX;
+            point['y'] = evt.targetTouches[0].clientY;
         }
         else {
             // Either Mouse event or Pointer Event
-            point.x = evt.clientX;
-            point.y = evt.clientY;
+            point['x'] = evt.clientX;
+            point['y'] = evt.clientY;
         }
 
         return point;
@@ -98,11 +140,11 @@
         evt.preventDefault();
 
         this._on({
-            'touchmove': this._onmove,
-            'touchend': this._onend,
-            'touchcancel': this._onend,
-            'mousemove': this._onmove,
-            'mouseup': this._onend
+            'touchmove': this._moveCallback,
+            'touchend': this._endCallback,
+            'touchcancel': this._endCallback,
+            'mousemove': this._moveCallback,
+            'mouseup': this._endCallback
         });
 
         this._startPos = this._getPos(evt);
@@ -121,12 +163,13 @@
             return;
         }
 
+        this._direction = null;
         this._un({
-            'touchmove': this._onmove,
-            'touchend': this._onend,
-            'touchcancel': this._onend,
-            'mousemove': this._onmove,
-            'mouseup': this._onend
+            'touchmove': this._moveCallback,
+            'touchend': this._endCallback,
+            'touchcancel': this._endCallback,
+            'mousemove': this._moveCallback,
+            'mouseup': this._endCallback
         });
     };
 
@@ -143,19 +186,66 @@
 
         this._animating = true;
         var that = this;
-        requestAnimationFrame(function (time) {
+        requestAnimationFrame(function () {
             if (!that._animating) {
                 return;
             }
 
             // TODO
-            console.log(point);
+            if (that._direction == null
+                && ((point['x'] - that._startPos['x'] >= that._directionDistance)
+                    || (point['y'] - that._startPos['y'] >= that._directionDistance))) {
+                that._direction = that._getDirection(point, that._startPos);
+                console.log(that._direction);
+            }
 
             that._animating = false;
         });
     };
 
-    window.swipeit = function (element) {
-        return new Swipe(element);
+    /**
+     * calculate angle
+     *
+     * @param {Object} curPos
+     * @param {Object} startPos
+     * @return {number} up|left|right|down
+     */
+    Swipe.prototype._calAngle = function (curPos, startPos) {
+        var x1 = curPos['x'] - startPos['x'];
+        var y1 = -curPos['y'] + startPos['y'];
+        var x2 = 1;
+        var y2 = 0;
+        var r = Math.acos((x1 * x2 + y1 * y2) / Math.sqrt((x1 * x1 + y1 * y1) * (x2 * x2 + y2 * y2)));
+        var angle = r * 180 / Math.PI;
+        return y1 < 0 ? (360 - angle) : angle;
+    };
+
+    /**
+     * calculate the direction
+     *
+     * @param {Object} curPos
+     * @param {Object} startPos
+     * @return {string} up|left|right|down or empty string if no right direction
+     */
+    Swipe.prototype._getDirection = function (curPos, startPos) {
+        var angle = this._calAngle(curPos, startPos);
+        console.log(angle);
+        var tmp;
+        for (var dir in this._angles) {
+            if (this._angles.hasOwnProperty(dir)) {
+                tmp = this._angles[dir];
+                for (var i = 0; i < tmp.length; i++) {
+                    if (angle >= tmp[i][0] && angle <= tmp[i][1]) {
+                        return dir;
+                    }
+                }
+            }
+        }
+
+        return '';
+    };
+
+    window.swipeit = function (element, opt_config) {
+        return new Swipe(element, opt_config);
     };
 })(window);
