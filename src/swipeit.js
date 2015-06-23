@@ -20,12 +20,18 @@
     // Works around a rare bug in Safari 6 where the first request is never invoked.
     requestAnimationFrame(function () {});
 
+    var UPDATE_EVENT = 'update';
+    var CANCEL_EVENT = 'cancel';
+    var SUCCESS_EVENT = 'success';
+    var START_EVENT = 'start';
+    var DONE_EVENT = 'done';
+
     /**
      * @constructor
      * @param {Element|string} element
      * @param {Object=} opt_config
      * @param {number=} opt_config.maxAngle
-     * @param {number=} opt_config.directionDistance
+     * @param {number=} opt_config.threshold
      */
     var Swipe = function (element, opt_config) {
         /**
@@ -56,9 +62,22 @@
         this._direction = null;
 
         /**
+         * {
+         *     'direction': 'top',
+         *     'position': {
+         *         'x': 100,
+         *         'y': 100
+         *     }
+         * }
+         * @type {Object}
+         */
+        this.status = {};
+        this.status['position'] = {};
+
+        /**
          * @type {number}
          */
-        this._directionDistance = this.opt['directionDistance'] || 5;
+        this._threshold = this.opt['threshold'] || 5;
 
         var maxAngle = this.opt['maxAngle'] || 45;
         /**
@@ -71,6 +90,11 @@
             'bottom': [ [270 - maxAngle, 270 + maxAngle] ]
         };
 
+        /**
+         * @type {Object}
+         */
+        this._callbacks = {};
+
         this._startCallback = this._onstart.bind(this);
         this._moveCallback = this._onmove.bind(this);
         this._endCallback = this._onend.bind(this);
@@ -80,10 +104,57 @@
     };
 
     /**
+     * @param {string} eventName
+     * @param {Function} callback
+     */
+    Swipe.prototype.on = function (eventName, callback) {
+        var cbs = this._callbacks[eventName] = this._callbacks[eventName] || [];
+        cbs.push(callback);
+    };
+
+    /**
+     * @param {string} eventName
+     * @param {Function=} opt_callback
+     */
+    Swipe.prototype.off = function (eventName, opt_callback) {
+        if (!opt_callback) {
+            this._callbacks[eventName].length = 0;
+            return;
+        }
+
+        var cbs = this._callbacks[eventName];
+        if (cbs && cbs.length) {
+            for (var i = 0; i < cbs.length; i++) {
+                if (opt_callback === cbs[i]) {
+                    cbs.splice(i, 1);
+                    return;
+                }
+            }
+        }
+    };
+
+    /**
+     * @param {string} eventName
+     */
+    Swipe.prototype.trigger = function (eventName) {
+        var cbs = this._callbacks[eventName];
+        if (cbs) {
+            var cb;
+            var args = slice.call(arguments, 1);
+            for (var i = 0; i < cbs.length; i++) {
+                cb = cbs[i];
+                if (cb) {
+                    cb.apply(this.e, args);
+                }
+            }
+        }
+    };
+
+    /**
      * @param {string|Object} eventName
      * @param {Function} callback
      */
-    Swipe.prototype._on = function (eventName, callback) {
+    Swipe.prototype._bind = function (eventName, callback) {
         if (typeof eventName === 'string') {
             document.addEventListener(eventName, callback, true);
         }
@@ -99,7 +170,7 @@
      * @param {string|Object} eventName
      * @param {Function} callback
      */
-    Swipe.prototype._un = function (eventName, callback) {
+    Swipe.prototype._unbind = function (eventName, callback) {
         if (typeof eventName === 'string') {
             document.removeEventListener(eventName, callback, true);
         }
@@ -116,7 +187,7 @@
      * @param {TouchEvent} event
      */
     Swipe.prototype._getPos = function (evt) {
-        var point = {};
+        var point = this.status['position'];
 
         if (evt.targetTouches) {
             // Prefer Touch Events
@@ -139,7 +210,7 @@
     Swipe.prototype._onstart = function (evt) {
         evt.preventDefault();
 
-        this._on({
+        this._bind({
             'touchmove': this._moveCallback,
             'touchend': this._endCallback,
             'touchcancel': this._endCallback,
@@ -150,6 +221,7 @@
         this._startPos = this._getPos(evt);
         this.e.style.WebkitTransition = 'initial';
         this.e.style.transition = 'initial';
+        this.trigger(START_EVENT);
     };
 
     /**
@@ -164,7 +236,7 @@
         }
 
         this._direction = null;
-        this._un({
+        this._unbind({
             'touchmove': this._moveCallback,
             'touchend': this._endCallback,
             'touchcancel': this._endCallback,
@@ -191,13 +263,13 @@
                 return;
             }
 
-            // TODO
-            if (that._direction == null
-                && ((point['x'] - that._startPos['x'] >= that._directionDistance)
-                    || (point['y'] - that._startPos['y'] >= that._directionDistance))) {
-                that._direction = that._getDirection(point, that._startPos);
-                console.log(that._direction);
+            if (that.status['direction'] == null
+                && ((Math.abs(point['x'] - that._startPos['x']) >= that._threshold)
+                    || (Math.abs(point['y'] - that._startPos['y']) >= that._threshold))) {
+                that.status['direction'] = that._getDirection(point, that._startPos);
             }
+
+            that.trigger(UPDATE_EVENT, that.status);
 
             that._animating = false;
         });
@@ -229,7 +301,6 @@
      */
     Swipe.prototype._getDirection = function (curPos, startPos) {
         var angle = this._calAngle(curPos, startPos);
-        console.log(angle);
         var tmp;
         for (var dir in this._angles) {
             if (this._angles.hasOwnProperty(dir)) {
